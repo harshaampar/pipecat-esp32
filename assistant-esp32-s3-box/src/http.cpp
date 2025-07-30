@@ -70,7 +70,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
   return ESP_OK;
 }
 
-esp_err_t pipecat_http_request(char *offer, char *answer) {
+void pipecat_http_request(char *offer, char *answer) {
   esp_http_client_config_t config;
   memset(&config, 0, sizeof(esp_http_client_config_t));
 
@@ -84,17 +84,17 @@ esp_err_t pipecat_http_request(char *offer, char *answer) {
   cJSON *j_offer = cJSON_CreateObject();
   if (j_offer == NULL) {
     ESP_LOGE(LOG_TAG, "Unable to create JSON offer");
-    return ESP_ERR_NO_MEM;
+    return;
   }
   if (cJSON_AddStringToObject(j_offer, "sdp", offer) == NULL) {
     cJSON_Delete(j_offer);
     ESP_LOGE(LOG_TAG, "Unable to create JSON offer");
-    return ESP_ERR_NO_MEM;
+    return;
   }
   if (cJSON_AddStringToObject(j_offer, "type", "offer") == NULL) {
     cJSON_Delete(j_offer);
     ESP_LOGE(LOG_TAG, "Unable to create JSON offer");
-    return ESP_ERR_NO_MEM;
+    return;
   }
 
   ESP_LOGD(LOG_TAG, "OFFER\n%s", offer);
@@ -113,26 +113,25 @@ esp_err_t pipecat_http_request(char *offer, char *answer) {
   if (err != ESP_OK || status_code != 200) {
     ESP_LOGE(LOG_TAG, "Error perform http request %s (status %d)",
              esp_err_to_name(err), status_code);
-    esp_http_client_cleanup(client);
-    free(j_offer_str);
-    return ESP_FAIL;
+#ifndef LINUX_BUILD
+    esp_restart();
+#endif
   }
 
   cJSON *j_response = cJSON_Parse((const char *)answer);
   if (j_response == NULL) {
     ESP_LOGE(LOG_TAG, "Error parsing HTTP response");
-    esp_http_client_cleanup(client);
-    free(j_offer_str);
-    return ESP_ERR_INVALID_RESPONSE;
+#ifndef LINUX_BUILD
+    esp_restart();
+#endif
   }
 
   cJSON *j_answer = cJSON_GetObjectItem(j_response, "sdp");
   if (j_answer == NULL) {
     ESP_LOGE(LOG_TAG, "Unable to find `sdp` field in response");
-    cJSON_Delete(j_response);
-    esp_http_client_cleanup(client);
-    free(j_offer_str);
-    return ESP_ERR_INVALID_RESPONSE;
+#ifndef LINUX_BUILD
+    esp_restart();
+#endif
   }
 
   memset(answer, 0, MAX_HTTP_OUTPUT_BUFFER + 1);
@@ -141,8 +140,6 @@ esp_err_t pipecat_http_request(char *offer, char *answer) {
   ESP_LOGD(LOG_TAG, "ANSWER\n%s", answer);
 
   cJSON_Delete(j_response);
+
   esp_http_client_cleanup(client);
-  free(j_offer_str);
-  
-  return ESP_OK;
 }
