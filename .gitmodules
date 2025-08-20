@@ -28,3 +28,12 @@
 [submodule "assistant-esp32-s3-box/components/esp-protocols"]
 	path = assistant-esp32-s3-box/components/esp-protocols
 	url = https://github.com/espressif/esp-protocols.git
+[submodule "meeting-assistant-esp32-s3-box/components/srtp"]
+	path = meeting-assistant-esp32-s3-box/components/srtp
+	url = https://git@github.com/sepfy/esp_ports
+[submodule "meeting-assistant-esp32-s3-box/components/esp-libopus"]
+	path = meeting-assistant-esp32-s3-box/components/esp-libopus
+	url = https://github.com/XasWorks/esp-libopus.git
+[submodule "meeting-assistant-esp32-s3-box/components/esp-protocols"]
+	path = meeting-assistant-esp32-s3-box/components/esp-protocols
+	url = https://github.com/espressif/esp-protocols.git

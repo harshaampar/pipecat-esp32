@@ -62,15 +62,9 @@ bool pipecat_is_meeting_active() {
 #ifndef LINUX_BUILD
 // Main task function that runs on Core 0
 void main_task(void *pvParameter) {
-  ESP_LOGI(LOG_TAG, "Main task started on Core 0");
-  int debug_counter = 0;
-  
+  ESP_LOGI(LOG_TAG, "Main task started on Core 0");  
   // Main loop - handle meeting state and button presses
   while (1) {
-    debug_counter++;
-    if(debug_counter % 500 == 0) {
-      ESP_LOGI(LOG_TAG, "Main task loop iteration - checking button");
-    }
     // Handle button presses based on current state
     if (pipecat_check_button_pressed()) {
       ESP_LOGI(LOG_TAG, "Button pressed in state: %d", current_meeting_state);
@@ -113,16 +107,7 @@ void main_task(void *pvParameter) {
     if (current_meeting_state != MEETING_STATE_IDLE) {
       pipecat_webrtc_loop();
     }
-    
-    // Debug logging every 5 seconds to confirm main task is running
-    static unsigned long last_debug_time = 0;
-    unsigned long current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    if (current_time - last_debug_time > 10000) {
-      ESP_LOGI(LOG_TAG, "Main task running - State: %d, Core: %d", 
-               current_meeting_state, xPortGetCoreID());
-      last_debug_time = current_time;
-    }
-        
+            
     vTaskDelay(pdMS_TO_TICKS(TICK_INTERVAL));
   }
 }

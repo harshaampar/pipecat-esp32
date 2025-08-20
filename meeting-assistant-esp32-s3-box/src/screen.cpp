@@ -162,10 +162,8 @@ static void create_start_meeting_ui() {
 }
 
 static void create_meeting_active_ui() {
-    ESP_LOGI(LOG_TAG, "create_meeting_active_ui: Starting UI creation");
     // Clear container
     lv_obj_clean(main_container);
-    ESP_LOGI(LOG_TAG, "create_meeting_active_ui: Container cleaned");
 
     // Title
     lv_obj_t *title = lv_label_create(main_container);
@@ -209,8 +207,6 @@ static void create_meeting_active_ui() {
     lv_anim_set_repeat_count(&pulse_anim, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_playback_time(&pulse_anim, PULSE_ANIMATION_SPEED);
     lv_anim_start(&pulse_anim);
-    
-    ESP_LOGI(LOG_TAG, "create_meeting_active_ui: UI creation completed");
 }
 
 static void update_meeting_timer(unsigned long duration_seconds) {
@@ -230,15 +226,8 @@ extern volatile bool shared_meeting_ui_update_needed;
 extern meeting_state_t current_meeting_state;
 
 static void screen_task(void *pvParameter) {
-    static int debug_counter = 0;
     while (1) {
         lv_timer_handler();
-        
-        debug_counter++;
-        if (debug_counter % 200 == 0) { // Every 10 seconds (200 * 50ms)
-            ESP_LOGI(LOG_TAG, "Screen task: State=%d, Update needed=%s", 
-                     current_meeting_state, shared_meeting_ui_update_needed ? "true" : "false");
-        }
         
         // Check for meeting UI updates from main task (thread-safe read)
         if (shared_meeting_ui_update_needed && current_meeting_state == MEETING_STATE_ACTIVE) {
@@ -247,8 +236,6 @@ static void screen_task(void *pvParameter) {
             
             // Clear the update flag
             shared_meeting_ui_update_needed = false;
-            
-            ESP_LOGI(LOG_TAG, "Screen task: Updating UI to meeting active, duration=%lu", duration);
             // Safely update UI from screen task context
             pipecat_screen_show_meeting_active(duration);
         }

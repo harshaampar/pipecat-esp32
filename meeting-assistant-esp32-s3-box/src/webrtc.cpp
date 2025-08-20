@@ -133,8 +133,26 @@ void pipecat_webrtc_loop() {
   peer_connection_loop(peer_connection);
 }
 
+void pipecat_send_disconnect_message() {
+  if (peer_connection && pipecat_is_webrtc_connected()) {
+    const char* disconnect_msg = "{\"type\":\"meeting.disconnect\",\"message\":\"ESP32 meeting ended\"}";
+    int result = peer_connection_datachannel_send(peer_connection, (char*)disconnect_msg, strlen(disconnect_msg));
+    if (result == 0) {
+      ESP_LOGI(LOG_TAG, "Disconnect message sent to server");
+    } else {
+      ESP_LOGE(LOG_TAG, "Failed to send disconnect message: %d", result);
+    }
+    
+    // Give time for message to be sent
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
 void pipecat_stop_webrtc() {
   ESP_LOGI(LOG_TAG, "Stopping WebRTC connection");
+  
+  // Send explicit disconnect message to server before closing
+  pipecat_send_disconnect_message();
   
   // First, signal audio task to stop gracefully
   if (audio_task_handle != NULL) {
