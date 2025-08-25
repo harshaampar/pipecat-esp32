@@ -1,15 +1,3 @@
-[submodule "esp32-s3-box-3/components/srtp"]
-	path = esp32-s3-box-3/components/srtp
-	url = https://git@github.com/sepfy/esp_ports
-[submodule "esp32-s3-box-3/deps/libpeer"]
-	path = esp32-s3-box-3/deps/libpeer
-	url = https://github.com/aconchillo/libpeer.git
-[submodule "esp32-s3-box-3/components/esp-libopus"]
-	path = esp32-s3-box-3/components/esp-libopus
-	url = https://github.com/XasWorks/esp-libopus.git
-[submodule "esp32-s3-box-3/components/esp-protocols"]
-	path = esp32-s3-box-3/components/esp-protocols
-	url = https://github.com/espressif/esp-protocols.git
 [submodule "esp32-s3-box/components/esp-libopus"]
 	path = esp32-s3-box/components/esp-libopus
 	url = https://github.com/XasWorks/esp-libopus.git
@@ -36,4 +24,13 @@
 	url = https://github.com/XasWorks/esp-libopus.git
 [submodule "meeting-assistant-esp32-s3-box/components/esp-protocols"]
 	path = meeting-assistant-esp32-s3-box/components/esp-protocols
+	url = https://github.com/espressif/esp-protocols.git
+[submodule "voice-keyboard-esp32-s3-box/components/srtp"]
+	path = voice-keyboard-esp32-s3-box/components/srtp
+	url = https://git@github.com/sepfy/esp_ports
+[submodule "voice-keyboard-esp32-s3-box/components/esp-libopus"]
+	path = voice-keyboard-esp32-s3-box/components/esp-libopus
+	url = https://github.com/XasWorks/esp-libopus.git
+[submodule "voice-keyboard-esp32-s3-box/components/esp-protocols"]
+	path = voice-keyboard-esp32-s3-box/components/esp-protocols
 	url = https://github.com/espressif/esp-protocols.git

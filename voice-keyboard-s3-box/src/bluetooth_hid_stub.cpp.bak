@@ -1,0 +1,105 @@
+#ifndef LINUX_BUILD
+
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <string.h>
+
+#include "main.h"
+
+// Global variables
+static bool bluetooth_initialized = false;
+static bool bluetooth_connected = false;
+
+// Text queue for async typing
+#define TEXT_QUEUE_SIZE 10
+#define MAX_TEXT_LENGTH 512
+static QueueHandle_t bluetooth_text_queue = NULL;
+static TaskHandle_t bluetooth_task_handle = NULL;
+
+static void bluetooth_task(void *pvParameter) {
+    ESP_LOGI(LOG_TAG, "Bluetooth HID stub task started on Core %d", xPortGetCoreID());
+    
+    char text_buffer[MAX_TEXT_LENGTH];
+    
+    while (1) {
+        // Wait for text to type (blocks until text is available)
+        if (xQueueReceive(bluetooth_text_queue, text_buffer, portMAX_DELAY)) {
+            ESP_LOGI(LOG_TAG, "📝 Would type via Bluetooth HID: %s", text_buffer);
+            
+            // Update state to typing
+            current_keyboard_state = KEYBOARD_STATE_TYPING;
+            shared_keyboard_state = KEYBOARD_STATE_TYPING;
+            shared_keyboard_ui_update_needed = true;
+            
+            // Simulate typing delay
+            vTaskDelay(pdMS_TO_TICKS(strlen(text_buffer) * 10)); // 10ms per character
+            
+            // Return to transcribing state (ready for more text)
+            current_keyboard_state = KEYBOARD_STATE_TRANSCRIBING;
+            shared_keyboard_state = KEYBOARD_STATE_TRANSCRIBING;
+            shared_keyboard_ui_update_needed = true;
+        }
+    }
+}
+
+void pipecat_init_bluetooth_hid() {
+    if (bluetooth_initialized) {
+        return;
+    }
+    
+    ESP_LOGI(LOG_TAG, "Initializing Bluetooth HID stub (will simulate keyboard typing)...");
+    
+    // Create text queue for async typing
+    bluetooth_text_queue = xQueueCreate(TEXT_QUEUE_SIZE, MAX_TEXT_LENGTH);
+    if (bluetooth_text_queue == NULL) {
+        ESP_LOGE(LOG_TAG, "Failed to create Bluetooth text queue");
+        return;
+    }
+    
+    // Create high-priority Bluetooth task on Core 0
+    xTaskCreatePinnedToCore(bluetooth_task, "Bluetooth HID Stub", 4096, NULL, 6, &bluetooth_task_handle, 0);
+    
+    bluetooth_initialized = true;
+    bluetooth_connected = true; // Simulate always connected for testing
+    ESP_LOGI(LOG_TAG, "Bluetooth HID stub initialized successfully");
+}
+
+void pipecat_queue_text_for_typing(const char* text) {
+    if (!bluetooth_initialized || bluetooth_text_queue == NULL) {
+        ESP_LOGW(LOG_TAG, "Bluetooth stub not initialized, cannot queue text");
+        return;
+    }
+    
+    if (strlen(text) >= MAX_TEXT_LENGTH) {
+        ESP_LOGW(LOG_TAG, "Text too long for queue, truncating");
+    }
+    
+    // Queue text for typing (non-blocking)
+    if (xQueueSend(bluetooth_text_queue, text, 0) != pdTRUE) {
+        ESP_LOGW(LOG_TAG, "Bluetooth text queue full, dropping text");
+    } else {
+        ESP_LOGI(LOG_TAG, "Queued text for simulated typing: %.50s%s", text, strlen(text) > 50 ? "..." : "");
+    }
+}
+
+bool pipecat_is_bluetooth_connected() {
+    return bluetooth_connected;
+}
+
+#else
+// Linux build stubs
+void pipecat_init_bluetooth_hid() {
+    ESP_LOGI(LOG_TAG, "Bluetooth HID not available in Linux build");
+}
+
+void pipecat_queue_text_for_typing(const char* text) {
+    ESP_LOGI(LOG_TAG, "Would type: %s", text);
+}
+
+bool pipecat_is_bluetooth_connected() {
+    return true; // Simulate connected state for testing
+}
+
+#endif

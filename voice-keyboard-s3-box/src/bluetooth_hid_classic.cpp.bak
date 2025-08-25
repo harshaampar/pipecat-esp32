@@ -1,0 +1,340 @@
+#ifndef LINUX_BUILD
+
+#include <esp_log.h>
+#include <esp_bt.h>
+#include <esp_bt_main.h>
+#include <esp_gap_ble_api.h>
+#include <esp_gatts_api.h>
+#include <esp_bt_defs.h>
+#include <esp_gatt_common_api.h>
+#include <esp_hidd_api.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <nvs_flash.h>
+#include <string.h>
+
+#include "main.h"
+
+// HID keyboard report descriptor
+static const uint8_t hid_keyboard_report_map[] = {
+    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x06,        // Usage (Keyboard)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x01,        //   Report ID (1)
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0xE0,        //   Usage Minimum (0xE0)
+    0x29, 0xE7,        //   Usage Maximum (0xE7)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x08,        //   Report Count (8)
+    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x08,        //   Report Size (8)
+    0x81, 0x03,        //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x06,        //   Report Count (6)
+    0x75, 0x08,        //   Report Size (8)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x65,        //   Logical Maximum (101)
+    0x05, 0x07,        //   Usage Page (Kbrd/Keypad)
+    0x19, 0x00,        //   Usage Minimum (0x00)
+    0x29, 0x65,        //   Usage Maximum (0x65)
+    0x81, 0x00,        //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,              // End Collection
+};
+
+// HID keyboard report structure
+typedef struct {
+    uint8_t modifier;
+    uint8_t reserved;
+    uint8_t keys[6];
+} hid_keyboard_report_t;
+
+// Global variables
+static bool bluetooth_initialized = false;
+static bool bluetooth_connected = false;
+static esp_hidd_app_param_t app_param;
+static esp_hidd_qos_param_t both_qos;
+
+// Text queue for async typing
+#define TEXT_QUEUE_SIZE 10
+#define MAX_TEXT_LENGTH 512
+static QueueHandle_t bluetooth_text_queue = NULL;
+static TaskHandle_t bluetooth_task_handle = NULL;
+
+// USB HID keycode mapping for common characters
+static uint8_t char_to_keycode(char c) {
+    if (c >= 'a' && c <= 'z') return c - 'a' + 0x04;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 0x04;
+    if (c >= '1' && c <= '9') return c - '1' + 0x1E;
+    if (c == '0') return 0x27;
+    if (c == ' ') return 0x2C;
+    if (c == '\n') return 0x28; // Enter
+    if (c == '.') return 0x37;
+    if (c == ',') return 0x36;
+    if (c == '?') return 0x38;
+    if (c == '!') return 0x1E;
+    if (c == ':') return 0x33;
+    if (c == ';') return 0x33;
+    if (c == '\'') return 0x34;
+    if (c == '"') return 0x34;
+    if (c == '-') return 0x2D;
+    if (c == '_') return 0x2D;
+    if (c == '(') return 0x26;
+    if (c == ')') return 0x27;
+    return 0x00; // Unknown character
+}
+
+static uint8_t char_needs_shift(char c) {
+    if (c >= 'A' && c <= 'Z') return 1;
+    if (c == '!' || c == '@' || c == '#' || c == '$' || c == '%') return 1;
+    if (c == '^' || c == '&' || c == '*' || c == '(' || c == ')') return 1;
+    if (c == '_' || c == '+' || c == '{' || c == '}' || c == '|') return 1;
+    if (c == ':' || c == '"' || c == '<' || c == '>' || c == '?') return 1;
+    return 0;
+}
+
+static void send_keyboard_report(uint8_t modifier, uint8_t keycode) {
+    hid_keyboard_report_t report = {0};
+    report.modifier = modifier;
+    report.keys[0] = keycode;
+    
+    if (bluetooth_connected) {
+        esp_err_t ret = esp_hidd_send_keyboard_value(ESP_HIDD_REPORT_TYPE_INTRDATA, ESP_HIDD_REPORT_ID_KEYBOARD, 
+                                                    &report, sizeof(hid_keyboard_report_t));
+        if (ret != ESP_OK) {
+            ESP_LOGW(LOG_TAG, "Failed to send keyboard report: %s", esp_err_to_name(ret));
+        }
+    }
+}
+
+static void type_character(char c) {
+    uint8_t keycode = char_to_keycode(c);
+    uint8_t modifier = char_needs_shift(c) ? 0x02 : 0x00; // Left shift
+    
+    if (keycode != 0x00) {
+        // Press key
+        send_keyboard_report(modifier, keycode);
+        vTaskDelay(pdMS_TO_TICKS(1)); // Minimal delay for HID protocol
+        
+        // Release key
+        send_keyboard_report(0x00, 0x00);
+        vTaskDelay(pdMS_TO_TICKS(1)); // Minimal delay between characters
+    }
+}
+
+static void bluetooth_task(void *pvParameter) {
+    ESP_LOGI(LOG_TAG, "Bluetooth HID task started on Core %d", xPortGetCoreID());
+    
+    char text_buffer[MAX_TEXT_LENGTH];
+    
+    while (1) {
+        // Wait for text to type (blocks until text is available)
+        if (xQueueReceive(bluetooth_text_queue, text_buffer, portMAX_DELAY)) {
+            if (bluetooth_connected) {
+                ESP_LOGI(LOG_TAG, "Typing text via Bluetooth HID: %s", text_buffer);
+                
+                // Update state to typing
+                current_keyboard_state = KEYBOARD_STATE_TYPING;
+                shared_keyboard_state = KEYBOARD_STATE_TYPING;
+                shared_keyboard_ui_update_needed = true;
+                
+                // Type each character at maximum speed
+                for (int i = 0; text_buffer[i] != '\0'; i++) {
+                    type_character(text_buffer[i]);
+                }
+                
+                ESP_LOGI(LOG_TAG, "Finished typing text via Bluetooth HID");
+                
+                // Return to transcribing state (ready for more text)
+                current_keyboard_state = KEYBOARD_STATE_TRANSCRIBING;
+                shared_keyboard_state = KEYBOARD_STATE_TRANSCRIBING;
+                shared_keyboard_ui_update_needed = true;
+            } else {
+                ESP_LOGW(LOG_TAG, "Bluetooth not connected, dropping text: %s", text_buffer);
+            }
+        }
+    }
+}
+
+// HID event callback
+static void esp_hidd_cb(esp_hidd_cb_event_t event, esp_hidd_cb_param_t *param) {
+    switch (event) {
+        case ESP_HIDD_EVENT_REG_FINISH:
+            ESP_LOGI(LOG_TAG, "HID registration finished");
+            if (param->init_finish.state == ESP_HIDD_INIT_OK) {
+                esp_ble_gap_set_device_name("Voice Keyboard");
+                esp_ble_gap_config_adv_data(&app_param.hidd_adv_data);
+            } else {
+                ESP_LOGE(LOG_TAG, "HID registration failed");
+            }
+            break;
+            
+        case ESP_HIDD_EVENT_DEINIT_FINISH:
+            ESP_LOGI(LOG_TAG, "HID deinitialization finished");
+            break;
+            
+        case ESP_HIDD_EVENT_BLE_CONNECT:
+            ESP_LOGI(LOG_TAG, "Bluetooth HID connected");
+            bluetooth_connected = true;
+            break;
+            
+        case ESP_HIDD_EVENT_BLE_DISCONNECT:
+            ESP_LOGI(LOG_TAG, "Bluetooth HID disconnected");
+            bluetooth_connected = false;
+            esp_ble_gap_start_advertising(&app_param.hidd_adv_params);
+            break;
+            
+        case ESP_HIDD_EVENT_BLE_VENDOR_REPORT_WRITE_EVT:
+            ESP_LOGD(LOG_TAG, "Vendor report write event");
+            break;
+            
+        default:
+            ESP_LOGD(LOG_TAG, "HID event: %d", event);
+            break;
+    }
+}
+
+// BLE GAP event callback
+static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+    switch (event) {
+        case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
+            ESP_LOGI(LOG_TAG, "Advertisement data set complete");
+            esp_ble_gap_start_advertising(&app_param.hidd_adv_params);
+            break;
+            
+        case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+            if (param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGI(LOG_TAG, "Advertisement started successfully");
+            } else {
+                ESP_LOGE(LOG_TAG, "Advertisement start failed: %d", param->adv_start_cmpl.status);
+            }
+            break;
+            
+        case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+            ESP_LOGI(LOG_TAG, "Advertisement stopped");
+            break;
+            
+        default:
+            ESP_LOGD(LOG_TAG, "GAP event: %d", event);
+            break;
+    }
+}
+
+void pipecat_init_bluetooth_hid() {
+    if (bluetooth_initialized) {
+        return;
+    }
+    
+    ESP_LOGI(LOG_TAG, "Initializing Bluetooth HID keyboard...");
+    
+    // Initialize NVS (already done in main, but safe to call again)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    
+    // Initialize Bluetooth controller and stack
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
+    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BLE));
+    ESP_ERROR_CHECK(esp_bluedroid_init());
+    ESP_ERROR_CHECK(esp_bluedroid_enable());
+    
+    // Register HID device callback
+    ESP_ERROR_CHECK(esp_hidd_register_callbacks(esp_hidd_cb));
+    
+    // Register BLE GAP callback
+    ESP_ERROR_CHECK(esp_ble_gap_register_callback(esp_gap_cb));
+    
+    // Configure HID device parameters
+    memset(&app_param, 0, sizeof(esp_hidd_app_param_t));
+    app_param.app_id = 0x1812;
+    app_param.appearance = 0x03C1; // Generic HID keyboard
+    
+    // Configure advertising data
+    app_param.hidd_adv_data.set_scan_rsp = false;
+    app_param.hidd_adv_data.include_name = true;
+    app_param.hidd_adv_data.include_txpower = false;
+    app_param.hidd_adv_data.min_interval = 0x0006; // 7.5ms
+    app_param.hidd_adv_data.max_interval = 0x0010; // 20ms
+    app_param.hidd_adv_data.appearance = 0x03C1; // Generic HID keyboard
+    app_param.hidd_adv_data.manufacturer_len = 0;
+    app_param.hidd_adv_data.p_manufacturer_data = NULL;
+    app_param.hidd_adv_data.service_data_len = 0;
+    app_param.hidd_adv_data.p_service_data = NULL;
+    app_param.hidd_adv_data.service_uuid_len = sizeof(app_param.hidd_service_uuid);
+    app_param.hidd_adv_data.p_service_uuid = app_param.hidd_service_uuid;
+    app_param.hidd_adv_data.flag = 0x6;
+    
+    // Configure advertising parameters
+    app_param.hidd_adv_params.adv_int_min = 0x20;
+    app_param.hidd_adv_params.adv_int_max = 0x30;
+    app_param.hidd_adv_params.adv_type = ADV_TYPE_IND;
+    app_param.hidd_adv_params.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+    app_param.hidd_adv_params.channel_map = ADV_CHNL_ALL;
+    app_param.hidd_adv_params.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+    
+    // Configure QoS parameters
+    memset(&both_qos, 0, sizeof(esp_hidd_qos_param_t)); // Use default QoS
+    
+    // Initialize HID device profile
+    ESP_ERROR_CHECK(esp_hidd_profile_init());
+    
+    // Register HID device application
+    ESP_ERROR_CHECK(esp_hidd_register_app(&app_param, &both_qos, esp_hidd_cb));
+    
+    // Create text queue for async typing
+    bluetooth_text_queue = xQueueCreate(TEXT_QUEUE_SIZE, MAX_TEXT_LENGTH);
+    if (bluetooth_text_queue == NULL) {
+        ESP_LOGE(LOG_TAG, "Failed to create Bluetooth text queue");
+        return;
+    }
+    
+    // Create high-priority Bluetooth task on Core 0
+    xTaskCreatePinnedToCore(bluetooth_task, "Bluetooth HID", 4096, NULL, 6, &bluetooth_task_handle, 0);
+    
+    bluetooth_initialized = true;
+    ESP_LOGI(LOG_TAG, "Bluetooth HID keyboard initialized successfully");
+}
+
+void pipecat_queue_text_for_typing(const char* text) {
+    if (!bluetooth_initialized || bluetooth_text_queue == NULL) {
+        ESP_LOGW(LOG_TAG, "Bluetooth not initialized, cannot queue text");
+        return;
+    }
+    
+    if (strlen(text) >= MAX_TEXT_LENGTH) {
+        ESP_LOGW(LOG_TAG, "Text too long for queue, truncating");
+    }
+    
+    // Queue text for typing (non-blocking)
+    if (xQueueSend(bluetooth_text_queue, text, 0) != pdTRUE) {
+        ESP_LOGW(LOG_TAG, "Bluetooth text queue full, dropping text");
+    } else {
+        ESP_LOGI(LOG_TAG, "Queued text for Bluetooth typing: %.50s%s", text, strlen(text) > 50 ? "..." : "");
+    }
+}
+
+bool pipecat_is_bluetooth_connected() {
+    return bluetooth_connected;
+}
+
+#else
+// Linux build stubs
+void pipecat_init_bluetooth_hid() {
+    ESP_LOGI(LOG_TAG, "Bluetooth HID not available in Linux build");
+}
+
+void pipecat_queue_text_for_typing(const char* text) {
+    ESP_LOGI(LOG_TAG, "Would type: %s", text);
+}
+
+bool pipecat_is_bluetooth_connected() {
+    return true; // Simulate connected state for testing
+}
+
+#endif
