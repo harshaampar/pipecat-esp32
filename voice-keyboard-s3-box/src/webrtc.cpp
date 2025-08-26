@@ -184,9 +184,6 @@ void pipecat_send_disconnect_message() {
 void pipecat_stop_webrtc() {
   ESP_LOGI(LOG_TAG, "Stopping WebRTC connection");
   
-  // Send explicit disconnect message to server before closing
-  pipecat_send_disconnect_message();
-  
   // First, signal audio task to stop gracefully
   if (audio_task_handle != NULL) {
     ESP_LOGI(LOG_TAG, "Signaling audio task to stop");

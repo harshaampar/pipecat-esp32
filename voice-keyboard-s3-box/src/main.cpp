@@ -32,24 +32,43 @@ void pipecat_start_voice_session() {
 }
 
 void pipecat_stop_voice_session() {
+    pipecat_send_debug_message("=== STOP SESSION CALLED ===");
+    ESP_LOGI(LOG_TAG, "pipecat_stop_voice_session() called - current state: %d", current_keyboard_state);
+    
     if (current_keyboard_state == KEYBOARD_STATE_TRANSCRIBING || current_keyboard_state == KEYBOARD_STATE_STARTING) {
+        pipecat_send_debug_message("State check passed - proceeding with stop");
         ESP_LOGI(LOG_TAG, "Stopping voice session from state: %d", current_keyboard_state);
         current_keyboard_state = KEYBOARD_STATE_STOPPING;
         
+        // Send disconnect message to server
+        pipecat_send_debug_message("Sending disconnect message to server");
+        pipecat_send_disconnect_message();
+        pipecat_send_debug_message("Disconnect message sent");
         
-        // Stop WebRTC connection (this should notify server of disconnection)
+        // Stop WebRTC connection locally
+        pipecat_send_debug_message("Stopping WebRTC connection");
         pipecat_stop_webrtc();
+        pipecat_send_debug_message("WebRTC connection stopped");
         
         // Give some time for disconnection to be processed
         vTaskDelay(pdMS_TO_TICKS(100));
         
-        // Reset shared variables (no UI updates)
-        shared_keyboard_state = KEYBOARD_STATE_IDLE;
-        
-        // Reset to idle state 
+        // Reset to idle state immediately 
         current_keyboard_state = KEYBOARD_STATE_IDLE;
+        pipecat_send_debug_message("Current state set to IDLE");
         
+        // Reset shared variables and trigger UI update via screen task (thread-safe)
+        shared_keyboard_state = KEYBOARD_STATE_IDLE;
+        shared_keyboard_ui_update_needed = true;
+        pipecat_send_debug_message("Shared state set to IDLE - UI update requested");
+        
+        pipecat_send_debug_message("=== VOICE SESSION STOPPED - NOW IN IDLE ===");
         ESP_LOGI(LOG_TAG, "Voice session stopped successfully, returned to IDLE state");
+    } else {
+        char debug_msg[100];
+        snprintf(debug_msg, sizeof(debug_msg), "Stop ignored - wrong state: %d", current_keyboard_state);
+        pipecat_send_debug_message(debug_msg);
+        ESP_LOGI(LOG_TAG, "Stop voice session ignored - current state: %d", current_keyboard_state);
     }
 }
 
@@ -71,7 +90,9 @@ void main_task(void *pvParameter) {
     // Periodic heartbeat every 10 seconds (200 iterations * 50ms = 10s)
     if (loop_count % 500 == 0) {
       ESP_LOGI(LOG_TAG, "Main loop heartbeat - state: %d, count: %d", current_keyboard_state, loop_count);
-      pipecat_send_debug_message("Main loop running - waiting for button");
+      char heartbeat_msg[100];
+      snprintf(heartbeat_msg, sizeof(heartbeat_msg), "Main loop running - state: %d - waiting for button", current_keyboard_state);
+      pipecat_send_debug_message(heartbeat_msg);
     }
 
     loop_count++;
@@ -79,18 +100,29 @@ void main_task(void *pvParameter) {
     // Handle button presses based on current state (minimal debug to prevent crashes)
     if (pipecat_check_button_pressed()) {
       ESP_LOGI(LOG_TAG, "Button pressed - state: %d", current_keyboard_state);
+      char button_debug[100];
+      snprintf(button_debug, sizeof(button_debug), "Button pressed in state: %d", current_keyboard_state);
+      pipecat_send_debug_message(button_debug);
+      
       switch (current_keyboard_state) {
         case KEYBOARD_STATE_IDLE:
+          pipecat_send_debug_message("Button -> Starting voice session");
           pipecat_start_voice_session();
           break;
         case KEYBOARD_STATE_STARTING:
+          pipecat_send_debug_message("Button -> Stopping from STARTING state");
           pipecat_stop_voice_session();
           break;
         case KEYBOARD_STATE_TRANSCRIBING:
+          pipecat_send_debug_message("Button -> Stopping from TRANSCRIBING state");
+          pipecat_stop_voice_session();
+          break;
         case KEYBOARD_STATE_TYPING:
+          pipecat_send_debug_message("Button -> Stopping from TYPING state");
           pipecat_stop_voice_session();
           break;
         default:
+          pipecat_send_debug_message("Button ignored - transitional state");
           ESP_LOGI(LOG_TAG, "Button ignored - transitional state");
           break;
       }

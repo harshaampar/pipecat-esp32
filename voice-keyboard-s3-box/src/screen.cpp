@@ -172,12 +172,7 @@ static void create_voice_keyboard_idle_ui() {
     lv_obj_t *btn_label = lv_label_create(start_button);
     lv_label_set_text(btn_label, "Press CONFIG Button\nto Start Voice Typing");
     
-    // Add debug label at bottom for system messages
-    debug_label = lv_label_create(main_container);
-    lv_label_set_text(debug_label, "Debug: System starting...");
-    lv_obj_add_style(debug_label, &text_style, 0);
-    lv_obj_set_style_text_font(debug_label, &lv_font_montserrat_14, 0);  // Smaller font
-    lv_obj_align(debug_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+    // Debug label removed
     lv_obj_center(btn_label);
 }
 
@@ -211,12 +206,7 @@ static void create_voice_status_ui(const char* status_text, const char* icon, ui
     lv_obj_t *btn_label = lv_label_create(stop_button);
     lv_label_set_text(btn_label, "Press CONFIG Button\nto Stop");
     
-    // Add debug label at bottom for system messages
-    debug_label = lv_label_create(main_container);
-    lv_label_set_text(debug_label, "Debug: Voice session active");
-    lv_obj_add_style(debug_label, &text_style, 0);
-    lv_obj_set_style_text_font(debug_label, &lv_font_montserrat_14, 0);  // Smaller font
-    lv_obj_align(debug_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+    // Debug label removed
     lv_obj_center(btn_label);
 }
 
@@ -354,22 +344,7 @@ void pipecat_screen_show_start_button() {
 
 void pipecat_screen_system_log(const char *text) {
     ESP_LOGI(LOG_TAG, "Screen log: %s", text);
-    
-    // Update debug label (always visible at bottom)
-    if (debug_label) {
-        char debug_text[100];
-        snprintf(debug_text, sizeof(debug_text), "Debug: %s", text);
-        lv_label_set_text(debug_label, debug_text);
-        ESP_LOGI(LOG_TAG, "Debug label updated with: %s", text);
-    } else {
-        ESP_LOGW(LOG_TAG, "Debug label not available yet!");
-    }
-    
-    // Also update status label for important messages
-    if (status_label && (strstr(text, "ERROR") || strstr(text, "Connected") || strstr(text, "ready"))) {
-        lv_label_set_text(status_label, text);
-        ESP_LOGI(LOG_TAG, "Status label also updated with: %s", text);
-    }
+    // Debug label removed - function kept for compatibility but does nothing
 }
 
 bool pipecat_check_button_pressed() {
