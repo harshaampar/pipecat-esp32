@@ -1,0 +1,12 @@
+# Enable USB Serial/JTAG Console for bidirectional communication
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG_ENABLED=y
+
+# Disable regular UART console
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+
+# Secondary console settings
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Bootloader settings
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

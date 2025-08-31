@@ -1,23 +1,23 @@
 cmake_minimum_required(VERSION 3.19)
 
-if(NOT IDF_TARGET STREQUAL linux)
-  if(NOT DEFINED ENV{WIFI_SSID} OR NOT DEFINED ENV{WIFI_PASSWORD})
-    message(FATAL_ERROR "Env variables WIFI_SSID and WIFI_PASSWORD must be set")
-  endif()
-
-  add_compile_definitions(WIFI_SSID="$ENV{WIFI_SSID}")
-  add_compile_definitions(WIFI_PASSWORD="$ENV{WIFI_PASSWORD}")
-endif()
-
-if(NOT DEFINED ENV{PIPECAT_SMALLWEBRTC_URL})
-  message(FATAL_ERROR "Env variable PIPECAT_SMALLWEBRTC_URL must be set")
-endif()
+# WiFi credentials and server URL are now configured dynamically via NVS storage
+# No need for compile-time environment variables
 
 if(DEFINED ENV{LOG_DATACHANNEL_MESSAGES})
   add_compile_definitions(LOG_DATACHANNEL_MESSAGES="1")
 endif()
 
-add_compile_definitions(PIPECAT_SMALLWEBRTC_URL="$ENV{PIPECAT_SMALLWEBRTC_URL}")
+# For compatibility with older code that might reference these
+# They will not be used in the new dynamic configuration system
+if(DEFINED ENV{WIFI_SSID})
+  message(STATUS "Note: WIFI_SSID environment variable detected but will not be used")
+  message(STATUS "Use the new configuration tool: python esp32_voice_keyboard_config.py")
+endif()
+
+if(DEFINED ENV{PIPECAT_SMALLWEBRTC_URL})
+  message(STATUS "Note: PIPECAT_SMALLWEBRTC_URL environment variable detected but will not be used")  
+  message(STATUS "Use the new configuration tool: python esp32_voice_keyboard_config.py")
+endif()
 
 set(COMPONENTS src)
 set(EXTRA_COMPONENT_DIRS "src" "components/srtp" "components/peer" "components/esp-libopus")

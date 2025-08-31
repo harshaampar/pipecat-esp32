@@ -18,6 +18,7 @@ static lv_obj_t *screen = NULL;
 static lv_obj_t *main_container = NULL;
 static lv_obj_t *start_button = NULL;
 static lv_obj_t *stop_button = NULL;
+static lv_obj_t *wifi_label = NULL;      // WiFi network name display
 static lv_obj_t *status_label = NULL;
 static lv_obj_t *timer_label = NULL;
 static lv_obj_t *transcribing_label = NULL;
@@ -33,6 +34,33 @@ static unsigned long last_button_press_time = 0;
 #define BUTTON_DEBOUNCE_MS 500  // 500ms debounce to prevent multiple quick presses
 // meeting_start_time removed - not needed for voice keyboard
 static button_handle_t physical_button = NULL;
+
+// Function to create/update WiFi status display at top of screen
+static void create_wifi_status_display() {
+    if (!main_container) return;
+    
+    if (!wifi_label) {
+        wifi_label = lv_label_create(main_container);
+        lv_obj_set_style_text_color(wifi_label, lv_color_hex(0x888888), 0);  // Gray color
+        lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_14, 0);   // Small font
+        lv_obj_align(wifi_label, LV_ALIGN_TOP_MID, 0, 5);                    // Top of screen
+    }
+    
+    // Show WiFi status based on current state and config
+    const voice_keyboard_config_t* config = pipecat_get_config();
+    if (current_keyboard_state >= KEYBOARD_STATE_CONFIG_MODE && current_keyboard_state <= KEYBOARD_STATE_CONFIG_PROVISIONING) {
+        // In configuration phase - show setup status
+        lv_label_set_text(wifi_label, "Setup: Configuring...");
+    } else if (config && config->wifi_ssid[0] != '\0') {
+        // Have valid config - show SSID
+        char wifi_text[64];
+        snprintf(wifi_text, sizeof(wifi_text), "WiFi: %s", config->wifi_ssid);
+        lv_label_set_text(wifi_label, wifi_text);
+    } else {
+        // No config available
+        lv_label_set_text(wifi_label, "WiFi: Not configured");
+    }
+}
 
 // Physical button callback - safer than touch
 static void physical_button_press_cb(void *button_handle, void *usr_data) {
@@ -50,7 +78,9 @@ static void physical_button_press_cb(void *button_handle, void *usr_data) {
     
     ESP_LOGI(LOG_TAG, "Physical button pressed in state: %d", current_keyboard_state);
     
-    if (current_keyboard_state == KEYBOARD_STATE_IDLE || current_keyboard_state == KEYBOARD_STATE_TRANSCRIBING) {
+    if (current_keyboard_state == KEYBOARD_STATE_IDLE || 
+        current_keyboard_state == KEYBOARD_STATE_TRANSCRIBING ||
+        current_keyboard_state == KEYBOARD_STATE_SERVER_UNAVAILABLE) {
         portENTER_CRITICAL(&button_mutex);
         button_pressed = true;
         portEXIT_CRITICAL(&button_mutex);
@@ -146,15 +176,25 @@ static void stop_button_event_cb(lv_event_t *e) {
 }
 
 static void create_voice_keyboard_idle_ui() {
-    // Clear container
+    // Clear container and reset all widget pointers
     lv_obj_clean(main_container);
+    wifi_label = NULL;  // Reset pointer after clean
+    status_label = NULL;
+    timer_label = NULL;
+    transcribing_label = NULL;
+    debug_label = NULL;
+    start_button = NULL;
+    stop_button = NULL;
+
+    // WiFi status display at top
+    create_wifi_status_display();
 
     // Title
     lv_obj_t *title = lv_label_create(main_container);
     lv_label_set_text(title, "Voice Keyboard");
     lv_obj_add_style(title, &text_style, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 35);
 
     // Status
     status_label = lv_label_create(main_container);
@@ -177,21 +217,35 @@ static void create_voice_keyboard_idle_ui() {
 }
 
 static void create_voice_status_ui(const char* status_text, const char* icon, uint32_t color) {
-    // Clear container
+    // Clear container and reset all widget pointers
     lv_obj_clean(main_container);
+    wifi_label = NULL;  // Reset pointer after clean
+    status_label = NULL;
+    timer_label = NULL;
+    transcribing_label = NULL;
+    debug_label = NULL;
+    start_button = NULL;
+    stop_button = NULL;
+
+    // WiFi status display at top
+    create_wifi_status_display();
 
     // Title
     lv_obj_t *title = lv_label_create(main_container);
     lv_label_set_text(title, "Voice Keyboard");
     lv_obj_add_style(title, &text_style, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 35);
 
-    // Status with icon - large and centered
+    // Status text - large and centered
     status_label = lv_label_create(main_container);
-    char status_with_icon[64];
-    snprintf(status_with_icon, sizeof(status_with_icon), "%s %s", icon, status_text);
-    lv_label_set_text(status_label, status_with_icon);
+    if (icon && icon[0] != '\0') {
+        char status_with_icon[64];
+        snprintf(status_with_icon, sizeof(status_with_icon), "%s %s", icon, status_text);
+        lv_label_set_text(status_label, status_with_icon);
+    } else {
+        lv_label_set_text(status_label, status_text);
+    }
     lv_obj_add_style(status_label, &text_style, 0);
     lv_obj_set_style_text_color(status_label, lv_color_hex(color), 0);
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_14, 0);
@@ -210,6 +264,111 @@ static void create_voice_status_ui(const char* status_text, const char* icon, ui
     lv_obj_center(btn_label);
 }
 
+// Server unavailable UI - shows when server is not running during voice session
+static void create_server_unavailable_ui() {
+    // Clear container and reset all widget pointers
+    lv_obj_clean(main_container);
+    wifi_label = NULL;  // Reset pointer after clean
+    status_label = NULL;
+    timer_label = NULL;
+    transcribing_label = NULL;
+    debug_label = NULL;
+    start_button = NULL;
+    stop_button = NULL;
+
+    // WiFi status display at top
+    create_wifi_status_display();
+
+    // Title
+    lv_obj_t *title = lv_label_create(main_container);
+    lv_label_set_text(title, "Voice Keyboard");
+    lv_obj_add_style(title, &text_style, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 35);
+
+    // Error message
+    lv_obj_t *error_label = lv_label_create(main_container);
+    lv_label_set_text(error_label, "SERVER NOT RUNNING");
+    lv_obj_add_style(error_label, &text_style, 0);
+    lv_obj_set_style_text_color(error_label, lv_color_hex(0xFF4444), 0);
+    lv_obj_set_style_text_font(error_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(error_label, LV_ALIGN_CENTER, 0, -50);
+
+    // Instruction message
+    lv_obj_t *instruction = lv_label_create(main_container);
+    lv_label_set_text(instruction, "Please start the server\nfor voice typing to work");
+    lv_obj_add_style(instruction, &text_style, 0);
+    lv_obj_set_style_text_color(instruction, lv_color_hex(0x666666), 0);
+    lv_obj_align(instruction, LV_ALIGN_CENTER, 0, -10);
+
+    // Retry button (display only - use physical CONFIG button to retry)
+    lv_obj_t *retry_button = lv_btn_create(main_container);
+    lv_obj_set_size(retry_button, 180, 60);
+    lv_obj_add_style(retry_button, &button_style, 0);
+    lv_obj_align(retry_button, LV_ALIGN_CENTER, 0, 40);
+
+    lv_obj_t *btn_label = lv_label_create(retry_button);
+    lv_label_set_text(btn_label, "Press CONFIG Button\nto Try Again");
+    lv_obj_center(btn_label);
+}
+
+// Configuration UI for different phases
+static void create_config_status_ui(const char* phase_text, const char* status_text, const char* icon, uint32_t color) {
+    // Clear container and reset all widget pointers
+    lv_obj_clean(main_container);
+    wifi_label = NULL;  // Reset pointer after clean
+    status_label = NULL;
+    timer_label = NULL;
+    transcribing_label = NULL;
+    debug_label = NULL;
+    start_button = NULL;
+    stop_button = NULL;
+
+    // WiFi status display at top
+    create_wifi_status_display();
+
+    // Title
+    lv_obj_t *title = lv_label_create(main_container);
+    lv_label_set_text(title, "Voice Keyboard Setup");
+    lv_obj_add_style(title, &text_style, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 35);
+
+    // Phase indicator
+    lv_obj_t *phase_label = lv_label_create(main_container);
+    lv_label_set_text(phase_label, phase_text);
+    lv_obj_add_style(phase_label, &text_style, 0);
+    lv_obj_set_style_text_color(phase_label, lv_color_hex(0x666666), 0);
+    lv_obj_align(phase_label, LV_ALIGN_CENTER, 0, -40);
+
+    // Status text - large and centered  
+    status_label = lv_label_create(main_container);
+    if (icon && icon[0] != '\0') {
+        char status_with_icon[128];
+        snprintf(status_with_icon, sizeof(status_with_icon), "%s %s", icon, status_text);
+        lv_label_set_text(status_label, status_with_icon);
+    } else {
+        lv_label_set_text(status_label, status_text);
+    }
+    lv_obj_add_style(status_label, &text_style, 0);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -10);
+
+    // Progress indicator or instruction
+    lv_obj_t *instruction = lv_label_create(main_container);
+    if (color == 0xFF0000) { // Failed state
+        lv_label_set_text(instruction, "Check configuration\nand restart device");
+    } else if (color == 0xFFA500) { // In progress
+        lv_label_set_text(instruction, "Please wait...");
+    } else { // Success state
+        lv_label_set_text(instruction, "✓ Success");
+    }
+    lv_obj_add_style(instruction, &text_style, 0);
+    lv_obj_set_style_text_color(instruction, lv_color_hex(0x888888), 0);
+    lv_obj_align(instruction, LV_ALIGN_CENTER, 0, 20);
+}
+
 // Main keyboard status function - called from screen task
 void pipecat_screen_show_keyboard_status(keyboard_state_t state) {
     static bool keyboard_ui_created = false;
@@ -223,25 +382,86 @@ void pipecat_screen_show_keyboard_status(keyboard_state_t state) {
             
         case KEYBOARD_STATE_STARTING:
             ESP_LOGI(LOG_TAG, "Showing keyboard starting UI");  
-            create_voice_status_ui("Connecting...", "🔗", 0xFFA500); // Orange
+            create_voice_status_ui("Connecting...", "", 0xFFA500); // Orange
             keyboard_ui_created = true;
             break;
             
         case KEYBOARD_STATE_TRANSCRIBING:
             ESP_LOGI(LOG_TAG, "Showing keyboard transcribing UI");
-            create_voice_status_ui("Transcribing...", "🎙️", 0x4CAF50); // Green
+            create_voice_status_ui("Transcribing...", "", 0x4CAF50); // Green
             keyboard_ui_created = true;
             break;
             
         case KEYBOARD_STATE_TYPING:
             ESP_LOGI(LOG_TAG, "Showing keyboard typing UI");
-            create_voice_status_ui("Typing...", "⌨️", 0x2196F3); // Blue
+            create_voice_status_ui("Typing...", "", 0x2196F3); // Blue
             keyboard_ui_created = true;
             break;
             
         case KEYBOARD_STATE_STOPPING:
             ESP_LOGI(LOG_TAG, "Showing keyboard stopping UI");
-            create_voice_status_ui("Stopping...", "🛑", 0xFF5722); // Red
+            create_voice_status_ui("Stopping...", "", 0xFF5722); // Red
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_SERVER_UNAVAILABLE:
+            ESP_LOGI(LOG_TAG, "Showing server unavailable UI");
+            create_server_unavailable_ui();
+            keyboard_ui_created = true;
+            break;
+            
+        // Configuration phase states
+        case KEYBOARD_STATE_CONFIG_MODE:
+            ESP_LOGI(LOG_TAG, "Showing configuration mode UI");
+            create_config_status_ui("Setup Required", "Configuration Mode", "", 0xFFA500);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_WIFI_CONNECTING:
+            ESP_LOGI(LOG_TAG, "Showing WiFi connecting UI");
+            create_config_status_ui("Phase 1/3", "Connecting to WiFi...", "", 0xFFA500);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_WIFI_CONNECTED:
+            ESP_LOGI(LOG_TAG, "Showing WiFi connected UI");
+            create_config_status_ui("Phase 1/3", "WiFi Connected", "", 0x4CAF50);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_WIFI_FAILED:
+            ESP_LOGI(LOG_TAG, "Showing WiFi failed UI");
+            create_config_status_ui("Phase 1/3", "WiFi Connection Failed", "", 0xFF0000);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_SERVER_CHECKING:
+            ESP_LOGI(LOG_TAG, "Showing server checking UI");
+            create_config_status_ui("Phase 2/3", "Checking Server...", "", 0xFFA500);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_SERVER_CONNECTED:
+            ESP_LOGI(LOG_TAG, "Showing server connected UI");
+            create_config_status_ui("Phase 2/3", "Server Connected", "", 0x4CAF50);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_SERVER_FAILED:
+            ESP_LOGI(LOG_TAG, "Showing server failed UI");
+            create_config_status_ui("Phase 2/3", "Server Connection Failed", "", 0xFF0000);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_HID_READY:
+            ESP_LOGI(LOG_TAG, "Showing HID ready UI");
+            create_config_status_ui("Phase 3/3", "HID Mode Ready", "", 0x4CAF50);
+            keyboard_ui_created = true;
+            break;
+            
+        case KEYBOARD_STATE_CONFIG_PROVISIONING:
+            ESP_LOGI(LOG_TAG, "Showing provisioning UI");
+            create_config_status_ui("Auto-Setup", "Requesting Configuration...", "", 0xFFA500);
             keyboard_ui_created = true;
             break;
             

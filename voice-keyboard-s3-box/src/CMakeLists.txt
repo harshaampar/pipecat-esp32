@@ -1,4 +1,4 @@
-set(COMMON_SRC "webrtc.cpp" "main.cpp" "http.cpp" "usb_hid_simple.cpp")
+set(COMMON_SRC "webrtc.cpp" "main.cpp" "http.cpp" "usb_hid_simple.cpp" "config.cpp" "config_serial.cpp")
 
 if(IDF_TARGET STREQUAL linux)
 	idf_component_register(
